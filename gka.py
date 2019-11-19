@@ -12,15 +12,13 @@ import random
 import math
 from sklearn.metrics.pairwise import cosine_similarity
 import heapq
-
+import csv
 
 class Chromosome():
     def __init__(self):
         self.center = self.init_center(num_cluster)
         self.dist = np.empty(num_cluster)
         self.sol = self.random_init_sol()
-
-        self.fitness_value = self.fitness()
         self.mutation_rate = [0.0] * len(data)
 #        self.mutation()    #mutate sol string and update center
 
@@ -33,7 +31,7 @@ class Chromosome():
 #        print(len(data.iloc[1]))
         center = np.empty([num_cluster,len(data[1])])
         for i in range(num_cluster):
-            random_node = int((random.randint(1,150) + random.randint(1,150)) / 2)
+            random_node = int((random.randint(0,149) + random.randint(0,149)) / 2)
             center[i] = data[random_node]            
         return(center)
     
@@ -48,137 +46,193 @@ class Chromosome():
          
             
     def distance(self, a, b):
-        dis = 0
+        tmp = 0
         for i in range(len(a)):
-            dis = dis + pow((a[i]-b[i]),2)
+            tmp = tmp + pow((a[i]-b[i]),2)
+        dis = math.sqrt(tmp)
         return dis
-    
-    
-    def fitness(self):
-        fitness_value = 0.0
-        for i in range(len(self.sol)):
-            #print(self.sol[i])
-#           print(fitness_value)
-#           print([self.sol[i]]) 
-           fitness_value = fitness_value + self.distance(data[i], self.center[self.sol[i]])
-        print('fitness_value = ',fitness_value)
-        return fitness_value
-    
+
     
     def mutation(self):
+        mutation_threshold = 0.8
+#        print("Before mutation : ", self.sol)
         sol_distribution = sorted(self.sol)
 #        print(sol_distribution)
         '''step 1 : choose the value to mutate'''
         for i in range(len(data)):
             self.mutation_rate[i] = random.random()
-            if(self.mutation_rate[i] > 0.9):
+            if(self.mutation_rate[i] > mutation_threshold):
 #                print(i, self.mutation_rate[i])
-                '''step 2 : do mutation on chosen point by wheel'''
+                '''step 2 : do mutation on chosen point by randomly selected from sol(1~K) accroding to the distribution'''
 #                print(str(self.sol[i]) + ' change to ' + str(random.choice(sol_distribution)))
-                self.sol[i] = random.choice(sol_distribution)
-                
-        '''step 3 : update center node'''
-        tmp_center = self.center
+                self.sol[i] = random.choice(sol_distribution)                
+#        print("After mutation : ", self.sol)
+        return self.sol
+
+
+    
+    def cluster(self):
+        '''step 1: calculate center node'''
         for i in range(len(self.center)):
             count = 0
             for j in range(len(self.sol)):
                 if self.sol[j] == i:
-                    tmp_center[i] = tmp_center[i] + data[j]
+                    self.center[i] = self.center[i] + data[j]
                     count = count + 1
-            self.center[i] = sum(tmp_center) / count
-            
-#        print('self.sol before cluster = ', self.sol)
+            if count == 0:   #To prevent inf
+                self.center[i] = self.center[i]
+            else:
+                self.center[i] = (self.center[i]) / count
         
-    def cluster(self):
-        '''step 1: calaulate the distance between each node and the center it belongs to.'''
-        data2 = pd.DataFrame(data, columns=['sepal_length', 'sepal_width', 'petal_length', 'petal_width'])
-#        print('data2 = ',(data2))
-        for n in range(len(data2)):
+        '''step 2: reassign each data point to the cluster with the nearest cluster center'''
+#        nodes = pd.DataFrame(data, columns=['sepal_length', 'sepal_width', 'petal_length', 'petal_width'])        
+#        nodes = pd.DataFrame(data)
+        nodes = features
+        for n in range(len(nodes)):
             for i in range(len(self.center)):
-                self.dist[i] = self.distance(data2.iloc[n], self.center[i])
-            min_idx = self.dist.argmin()
-            '''step 2: updata the chromosome''' 
-            self.sol[n] = min_idx        
-        return self.sol
-#        print('self.sol after cluster = ', self.sol)
-                                                                                                                                                            
+                self.dist[i] = self.distance(nodes.iloc[n], self.center[i])
+            min_idx = self.dist.argmin()  #choose the nearest center
+            self.sol[n] = min_idx    #reassign each data point belongs to  
+        return self.sol, self.center
+    
+
+
+    
+def fitness_value(population):
+    sse = [0.0]*len(population)
+    fsw = [0.0]*len(population)
+    c = 2  #constant between 1~3
+    
+    #calculate sse of each chromosome
+    #sse: sum of distance of each point betwwen the within cluster
+    for i in range(len(population)):
+       for j in range(len(data)):
+           sse[i] = sse[i] + population[i].distance(data[j], population[i].center[population[i].sol[j]])
+       fsw[i] = (-1) * sse[i]
+       
+    #calculate average of fsw 
+    avg_fsw = sum(fsw)/len(sse)
+    #calculate standard deviation of f_sw
+    sigma = np.std(fsw, dtype=np.float64)
+    
+    #calculate fitness value 
+    fitness = [0.0]*len(population)
+    for i in range (len(population)):
+        fitness[i] = fsw[i] - (avg_fsw - c*sigma)    #formula of fitness value
+        if fitness[i] >= 0:
+            pass
+        else:
+            fitness[i] = 0
+#    print("sse = ", sse)   
+    return fitness, sse
+
+
         
 
-#選擇菁英基因 (假設40%以內)
+#選擇菁英基因 (假設68%以內)
 def selection(population, fitness_arr):
     population_size = len(fitness_arr)
-    chosen_rate = 0.4
     fitness_arr = np.array(fitness_arr)
-    fitness_arr = fitness_arr * (-1)
-#    print(fitness_arr)
-    index_of_chosen = heapq.nlargest(int(len(fitness_arr)*chosen_rate), range(len(fitness_arr)), fitness_arr.take) 
-#    print(index_of_chosen)
+#    total_candidate_chromosome_size = int(sum(fitness_arr))
+    each_candidate_chromosome_size = [0.0]*len(fitness_arr)
     
-    '''put the value_of_chosen into array'''
-    new_populations = []
-    for i in range(len(index_of_chosen)):
-        new_populations.append(population[index_of_chosen[i]])
+    '''========roulette wheel selection ========='''
+    '''Step 1 : Generate all of candidate_chromosome by the fitness value'''
+    for i in range(len(fitness_arr)):
+        each_candidate_chromosome_size[i] = int(fitness_arr[i])
         
-    '''fill chosen value for full'''    
-    while(len(new_populations) < population_size):
-        idx = random.choice(index_of_chosen)
-#        print(idx)
-        new_populations.append(population[idx])
-#    print(new_populations)
-    return new_populations
+    candidate_chromosome = list()
+    for i in range(population_size):
+        cnt = 0
+        while cnt < each_candidate_chromosome_size[i]:
+            candidate_chromosome.append(population[i])
+            cnt+=1
+#            print("candidate_chromosome.sol = ", candidate_chromosome[i].sol)
+#            print("candidate_chromosome.center = ", candidate_chromosome[i].center) 
+            
+    '''Step 2: Random choice from all of candidate_chromosome'''
+    new_populations = random.choices(candidate_chromosome, k=population_size)
 
+    return new_populations
     
+ 
+    
+
+
 def main():    
-    population = [Chromosome()]*population_size
-#    print(population)
-    fitness_arr = [0.0]*population_size
-#    print('population[0].sol = ',population[0].sol)
-#    print('population[0].center = ', population[0].center)
-#    print('population[0].fitness_value = ', population[0].fitness_value)
-    
-    for j in range(population_size):
-        total_fitness_value = 0
-        population[j] = Chromosome()
-    
+    population = [None]*population_size    #initial population
+    '''initial each Chromosome with random sol'''
+    for i in range(population_size):
+        population[i] = Chromosome()
+        #print("population[",i,"].sol",population[i].sol)
+#        print("population[",i,"].center",population[i].center)
+
+    geno = MAX_GEN    
+    final_population = list()
     #for each generation
-    for i in range(MAX_GEN):
-        print('the ', i+1, 'th iteration: ')
-        population = selection(population, fitness_arr)
+    while(geno > 0):   
+        print('the ', MAX_GEN - geno + 1, 'th iteration: ')           
+            
+            
+        '''calculate fitness values of each string''' 
+        fitness_arr = fitness_value(population)
+#        print("fitness = ",fitness_arr)    
+            
+        '''selection'''
+        #If fitness_value is convergence, selection function can not be called, because it will return IndexError.
+        try:
+            population = selection(population, fitness_arr[0])
+        except IndexError:
+            print("======= Iteration End !! ========")
+            break
         
-        #for each chromosome
-        for j in range(population_size):
-            total_fitness_value = 0
-#            print('the ', j, 'th chromosome: ')
-#            print(population[j].sol)
-            population[j].mutation()
-            population[j].cluster()
-#            fitness_arr[j] = population[j].fitness()
-            fitness_arr[j] = population[j].fitness_value
-#            print(population[j].fitness_value)
-            total_fitness_value = total_fitness_value + population[j].fitness_value
-            avg_fitness_value = total_fitness_value / population_size
-            print('sse = ',avg_fitness_value)
+        new_population = list()
+        '''mutation and K-means operator'''
+        for i in range(population_size):
+            mutate = population[i].mutation()
+            KMO = population[i].cluster()
+#            print('population[', i ,'].cluster()', KMO[0])
+#            print('population[', i ,'].center()', KMO[1])
+            new_population.append(KMO)    
+        
+        geno = geno-1  
         print("============")
         
-        
-#    print(i, "th iteration population","\n",population[j] , "\n","=============================")
-#        print(fitness_arr)
-#        new_populations = selection(population, fitness_arr)
-        
-#        print(new_populations[j].center)
-#        print(new_populations[j].sol)
-        print("==============================")
+    final_population = new_population    
     
+    chosen_index = np.argmax(fitness_arr[0])
+#    print("best chromosome = ",final_population[chosen_index])
+#    print("best SSE = ",fitness_arr[1][chosen_index])
+    
+    with open('GKA result.csv','a',newline='') as fd:
+        fdWrite = csv.writer(fd)
+#        fdWrite.writerow([fitness_arr[1][chosen_index],final_population[chosen_index][0],final_population[chosen_index][1]])
+        fdWrite.writerow([fitness_arr[1][chosen_index]])
+
     
     
     
     
 if __name__ == "__main__":
-    df = pd.read_csv('iris2.data')
-    
+    #prepare data
+    df = pd.read_csv('iris.data', header=None)
+    df.columns = ['sepal_length', 'sepal_width', 'petal_length', 'petal_width', 'class']
+    for i in range(len(df['class'])):
+        if df['class'].iloc[i] == 'Iris-setosa':
+            df['class'].iloc[i] = 0
+        elif df['class'].iloc[i] == 'Iris-versicolor':
+            df['class'].iloc[i] = 1
+        else:
+            df['class'].iloc[i] = 2
+
+#    print(df.head())
+    features = df.drop(columns = ['class'])
+    labels = df["class"]
     data = df.drop(columns = ['class']).values
+    real_sol = df["class"].values
 #    print('data',data)
-    population_size = 10
+    global population_size 
+    population_size = 200
     num_cluster = 3
-    MAX_GEN = 20
+    MAX_GEN = 20  
     main()
