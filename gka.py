@@ -129,7 +129,7 @@ def fitness_value(population):
 
         
 
-#選擇菁英基因 (假設68%以內)
+#選擇菁英基因 
 def selection(population, fitness_arr):
     population_size = len(fitness_arr)
     fitness_arr = np.array(fitness_arr)
